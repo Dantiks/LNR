@@ -247,6 +247,19 @@ io.on('connection', (socket) => {
 
     console.log(`✏️ Chat title updated: ${chatId} -> ${title}`);
   });
+  
+  // Handle chat deletion
+  socket.on('delete-chat', (chatId) => {
+    if (!chats[chatId]) {
+      console.error(`❌ Chat not found: ${chatId}`);
+      return;
+    }
+    
+    delete chats[chatId];
+    io.emit('chat-deleted', chatId);
+    
+    console.log(`🗑️ Chat deleted: ${chatId}`);
+  });
 
   // Handle disconnection
   socket.on('disconnect', () => {

@@ -19,6 +19,7 @@ const userCountText = document.getElementById('user-count-text');
 const newChatBtn = document.getElementById('new-chat-btn');
 const currentChatTitle = document.getElementById('current-chat-title');
 const renameChatBtn = document.getElementById('rename-chat-btn');
+const deleteChatBtn = document.getElementById('delete-chat-btn');
 const chatMessages = document.getElementById('chat-messages');
 
 let currentTab = 'text';
@@ -93,6 +94,27 @@ socket.on('chat-title-updated', (data) => {
     }
 });
 
+socket.on('chat-deleted', (chatId) => {
+    console.log('🗑️ Chat deleted:', chatId);
+
+    if (chats[chatId]) {
+        delete chats[chatId];
+        renderChatsList();
+
+        // If deleted chat was active, switch to another chat
+        if (activeChat === chatId) {
+            const remainingChats = Object.keys(chats);
+            if (remainingChats.length > 0) {
+                switchToChat(remainingChats[0]);
+            } else {
+                activeChat = null;
+                currentChatTitle.textContent = 'Нет чатов';
+                renderChatMessages();
+            }
+        }
+    }
+});
+
 // Create new chat (with debouncing to prevent multiple clicks)
 let isCreatingChat = false;
 newChatBtn.addEventListener('click', () => {
@@ -122,6 +144,18 @@ renameChatBtn.addEventListener('click', () => {
             chatId: activeChat,
             title: newTitle.trim()
         });
+    }
+});
+
+// Delete chat
+deleteChatBtn.addEventListener('click', () => {
+    if (!activeChat) return;
+
+    const chatTitle = chats[activeChat].title;
+    const confirmed = confirm(`Вы уверены, что хотите удалить чат "${chatTitle}"?`);
+
+    if (confirmed) {
+        socket.emit('delete-chat', activeChat);
     }
 });
 
