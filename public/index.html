@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Shortener - Умное сокращение текста</title>
+    <meta name="description" content="Сокращайте текст до 80-120 символов. Поддержка обработки URL.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="background-gradient"></div>
+
+    <!-- Sidebar with chats list -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <button id="new-chat-btn" class="new-chat-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Новый чат
+            </button>
+            <div class="user-count">
+                <div class="online-indicator"></div>
+                <span id="user-count-text">0 онлайн</span>
+            </div>
+        </div>
+
+        <div class="chats-list" id="chats-list">
+            <div class="empty-chats">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <p>Нет чатов</p>
+                <span>Создайте новый чат</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Toggle sidebar button (mobile) -->
+    <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+    </button>
+
+    <div class="container">
+        <header class="header">
+            <div class="chat-title-wrapper">
+                <h2 id="current-chat-title" class="current-chat-title">Новый чат</h2>
+                <button id="rename-chat-btn" class="icon-btn-small" title="Переименовать чат">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Chat messages (history for current chat) -->
+            <div class="chat-messages" id="chat-messages">
+                <div class="welcome-message">
+                    <div class="logo">
+                        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                    </div>
+                    <h1>Text Shortener</h1>
+                    <p class="subtitle">Умное сокращение текста до 80-120 символов</p>
+                    <p class="hint-text">Начните вводить текст или URL ниже</p>
+                </div>
+            </div>
+
+            <div class="input-section card">
+                <div class="tabs">
+                    <button class="tab active" data-tab="text">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        Текст
+                    </button>
+                    <button class="tab" data-tab="url">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                        URL
+                    </button>
+                </div>
+
+                <div class="tab-content" id="text-tab">
+                    <label for="text-input" class="input-label">Введите текст для сокращения</label>
+                    <textarea id="text-input" class="text-input" placeholder="Вставьте или введите текст любой длины..."
+                        rows="6"></textarea>
+                    <div class="char-count">
+                        <span id="char-count">0</span> символов
+                    </div>
+                </div>
+
+                <div class="tab-content hidden" id="url-tab">
+                    <label for="url-input" class="input-label">Введите URL страницы</label>
+                    <div class="url-input-wrapper">
+                        <svg class="url-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                        </svg>
+                        <input type="url" id="url-input" class="url-input" placeholder="https://example.com/article" />
+                    </div>
+                    <p class="hint">Мы извлечем текст со страницы и сократим его</p>
+                </div>
+
+                <button id="process-btn" class="process-btn">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>Сократить текст</span>
+                    <div class="btn-shine"></div>
+                </button>
+
+                <div class="loading hidden" id="loading">
+                    <div class="spinner"></div>
+                    <p>Обрабатываем...</p>
+                </div>
+
+                <div class="error hidden" id="error">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p id="error-message"></p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Socket.io client library -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
