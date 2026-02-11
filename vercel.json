@@ -1,12 +1,10 @@
 {
+    "buildCommand": "echo 'No build needed'",
+    "outputDirectory": ".",
     "rewrites": [
         {
             "source": "/api/fetch-url",
-            "destination": "/api/server"
-        },
-        {
-            "source": "/(.*)",
-            "destination": "/public/$1"
+            "destination": "/api/server.js"
         }
     ]
 }
