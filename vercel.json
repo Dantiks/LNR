@@ -1,19 +1,8 @@
 {
-    "version": 2,
-    "builds": [
-        {
-            "src": "api/server.js",
-            "use": "@vercel/node"
-        }
-    ],
     "rewrites": [
         {
             "source": "/api/fetch-url",
-            "destination": "/api/server.js"
-        },
-        {
-            "source": "/",
-            "destination": "/public/index.html"
+            "destination": "/api/server"
         },
         {
             "source": "/(.*)",
