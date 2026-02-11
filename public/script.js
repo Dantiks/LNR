@@ -1,5 +1,5 @@
-// Initialize Socket.io
-const socket = io();
+// VERCEL VERSION - LocalStorage instead of Socket.io
+// Real-time features disabled for Vercel deployment
 
 // DOM elements
 const tabs = document.querySelectorAll('.tab');
@@ -23,115 +23,50 @@ const deleteChatBtn = document.getElementById('delete-chat-btn');
 const chatMessages = document.getElementById('chat-messages');
 
 let currentTab = 'text';
-let chats = {};
-let activeChat = null;
+let chats = JSON.parse(localStorage.getItem('chats') || '{}');
+let activeChat = localStorage.getItem('activeChat') || null;
 
-// Socket.io event handlers
-socket.on('connect', () => {
-    console.log('✅ Connected to server');
-});
+// Initialize
+function init() {
+    userCountText.textContent = 'Только вы (Vercel)';
 
-socket.on('user-count', (count) => {
-    userCountText.textContent = count === 1 ? '1 онлайн' : `${count} онлайн`;
-});
-
-socket.on('chats', (chatsArray) => {
-    console.log(`📚 Received ${chatsArray.length} chats`);
-
-    chatsArray.forEach(chat => {
-        chats[chat.id] = chat;
-    });
-
-    renderChatsList();
-
-    // Select first chat as active
-    if (chatsArray.length > 0 && !activeChat) {
-        switchToChat(chatsArray[0].id);
-    }
-});
-
-socket.on('chat-created', (newChat) => {
-    console.log('✨ New chat created:', newChat.id);
-    chats[newChat.id] = newChat;
-    renderChatsList();
-    // Auto-switch to new chat
-    switchToChat(newChat.id);
-});
-
-socket.on('message-added', (data) => {
-    const { chatId, message, chatTitle } = data;
-
-    if (!chats[chatId]) {
-        chats[chatId] = { id: chatId, title: chatTitle, messages: [], createdAt: new Date().toISOString() };
-    }
-
-    // Add message if not already exists
-    if (!chats[chatId].messages.find(m => m.id === message.id)) {
-        chats[chatId].messages.push(message);
-    }
-
-    // Update title if changed
-    if (chatTitle !== chats[chatId].title) {
-        chats[chatId].title = chatTitle;
+    if (Object.keys(chats).length === 0) {
+        createChat();
+    } else if (activeChat && chats[activeChat]) {
+        switchToChat(activeChat);
+    } else {
+        const firstChat = Object.keys(chats)[0];
+        if (firstChat) switchToChat(firstChat);
     }
 
     renderChatsList();
+}
 
-    // If this is the active chat, add message to view
-    if (chatId === activeChat) {
-        renderChatMessages();
-    }
-});
+// Save to localStorage
+function saveChats() {
+    localStorage.setItem('chats', JSON.stringify(chats));
+    localStorage.setItem('activeChat', activeChat);
+}
 
-socket.on('chat-title-updated', (data) => {
-    const { chatId, title } = data;
-    if (chats[chatId]) {
-        chats[chatId].title = title;
-        renderChatsList();
-        if (chatId === activeChat) {
-            currentChatTitle.textContent = title;
-        }
-    }
-});
+// Create new chat
+function createChat() {
+    const newChatId = 'chat-' + Date.now();
+    const newChat = {
+        id: newChatId,
+        title: 'Новый чат',
+        createdAt: new Date().toISOString(),
+        messages: []
+    };
 
-socket.on('chat-deleted', (chatId) => {
-    console.log('🗑️ Chat deleted:', chatId);
+    chats[newChatId] = newChat;
+    saveChats();
+    renderChatsList();
+    switchToChat(newChatId);
+    console.log('✨ New chat created:', newChatId);
+}
 
-    if (chats[chatId]) {
-        delete chats[chatId];
-        renderChatsList();
-
-        // If deleted chat was active, switch to another chat
-        if (activeChat === chatId) {
-            const remainingChats = Object.keys(chats);
-            if (remainingChats.length > 0) {
-                switchToChat(remainingChats[0]);
-            } else {
-                activeChat = null;
-                currentChatTitle.textContent = 'Нет чатов';
-                renderChatMessages();
-            }
-        }
-    }
-});
-
-// Create new chat (with debouncing to prevent multiple clicks)
-let isCreatingChat = false;
 newChatBtn.addEventListener('click', () => {
-    if (isCreatingChat) return;
-
-    isCreatingChat = true;
-    newChatBtn.disabled = true;
-    newChatBtn.style.opacity = '0.6';
-
-    socket.emit('create-chat');
-
-    // Re-enable after 1 second
-    setTimeout(() => {
-        isCreatingChat = false;
-        newChatBtn.disabled = false;
-        newChatBtn.style.opacity = '1';
-    }, 1000);
+    createChat();
 });
 
 // Rename chat
@@ -140,10 +75,10 @@ renameChatBtn.addEventListener('click', () => {
 
     const newTitle = prompt('Введите новое название чата:', chats[activeChat].title);
     if (newTitle && newTitle.trim()) {
-        socket.emit('update-chat-title', {
-            chatId: activeChat,
-            title: newTitle.trim()
-        });
+        chats[activeChat].title = newTitle.trim();
+        saveChats();
+        currentChatTitle.textContent = newTitle.trim();
+        renderChatsList();
     }
 });
 
@@ -155,7 +90,18 @@ deleteChatBtn.addEventListener('click', () => {
     const confirmed = confirm(`Вы уверены, что хотите удалить чат "${chatTitle}"?`);
 
     if (confirmed) {
-        socket.emit('delete-chat', activeChat);
+        delete chats[activeChat];
+        saveChats();
+
+        const remainingChats = Object.keys(chats);
+        if (remainingChats.length > 0) {
+            switchToChat(remainingChats[0]);
+        } else {
+            activeChat = null;
+            currentChatTitle.textContent = 'Нет чатов';
+            createChat();
+        }
+        renderChatsList();
     }
 });
 
@@ -189,15 +135,6 @@ tabs.forEach(tab => {
 // Character counter
 textInput.addEventListener('input', () => {
     charCount.textContent = textInput.value.length;
-});
-
-// Event delegation for chat item clicks
-chatsList.addEventListener('click', (e) => {
-    const chatItem = e.target.closest('.chat-item');
-    if (chatItem) {
-        const chatId = chatItem.dataset.chatId;
-        switchToChat(chatId);
-    }
 });
 
 // Render chats list
@@ -237,15 +174,11 @@ function renderChatsList() {
 }
 
 // Event delegation for chat items
-chatsList.addEventListener('click', (event) => {
-    let target = event.target;
-    // Traverse up the DOM to find the .chat-item
-    while (target && !target.classList.contains('chat-item')) {
-        target = target.parentElement;
-    }
-
-    if (target && target.dataset.chatId) {
-        switchToChat(target.dataset.chatId);
+chatsList.addEventListener('click', (e) => {
+    const chatItem = e.target.closest('.chat-item');
+    if (chatItem) {
+        const chatId = chatItem.dataset.chatId;
+        switchToChat(chatId);
     }
 });
 
@@ -255,8 +188,7 @@ function switchToChat(chatId) {
 
     activeChat = chatId;
     currentChatTitle.textContent = chats[chatId].title;
-
-    socket.emit('switch-chat', chatId);
+    saveChats();
 
     renderChatsList();
     renderChatMessages();
@@ -330,7 +262,6 @@ function renderChatMessages() {
 window.copyText = async function (text) {
     try {
         await navigator.clipboard.writeText(text);
-        // TODO: Show toast notification
         console.log('✅ Copied to clipboard');
     } catch (err) {
         console.error('Failed to copy:', err);
@@ -415,6 +346,32 @@ function hideLoading() {
     loading.classList.add('hidden');
 }
 
+// Add message to chat
+function addMessage(type, original, result) {
+    if (!activeChat) return;
+
+    const message = {
+        id: Date.now() + Math.random(),
+        timestamp: new Date().toISOString(),
+        type: type,
+        original: original,
+        result: result
+    };
+
+    chats[activeChat].messages.push(message);
+
+    // Auto-update chat title from first message
+    if (chats[activeChat].messages.length === 1 && chats[activeChat].title === 'Новый чат') {
+        const shortTitle = result.substring(0, 30) + (result.length > 30 ? '...' : '');
+        chats[activeChat].title = shortTitle;
+        currentChatTitle.textContent = shortTitle;
+    }
+
+    saveChats();
+    renderChatMessages();
+    renderChatsList();
+}
+
 // Process text
 async function processText() {
     if (!activeChat) {
@@ -441,21 +398,10 @@ async function processText() {
 
         setTimeout(() => {
             const shortened = shortenText(text);
-
-            // Send to server
-            socket.emit('new-message', {
-                chatId: activeChat,
-                message: {
-                    type: 'text',
-                    original: text,
-                    result: shortened
-                }
-            });
-
+            addMessage('text', text, shortened);
             hideLoading();
             textInput.value = '';
             charCount.textContent = '0';
-
         }, 500);
 
     } else {
@@ -484,17 +430,7 @@ async function processText() {
             }
 
             const shortened = shortenText(data.text);
-
-            // Send to server
-            socket.emit('new-message', {
-                chatId: activeChat,
-                message: {
-                    type: 'url',
-                    original: data.text,
-                    result: shortened
-                }
-            });
-
+            addMessage('url', data.text, shortened);
             hideLoading();
             urlInput.value = '';
 
@@ -521,11 +457,5 @@ textInput.addEventListener('keydown', (e) => {
     }
 });
 
-// Connection status
-socket.on('connect_error', () => {
-    console.error('❌ Failed to connect to server');
-});
-
-socket.on('disconnect', () => {
-    console.log('🔌 Disconnected from server');
-});
+// Initialize on load
+init();
