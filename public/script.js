@@ -1,19 +1,12 @@
-// Initialize Socket.io
+// ================================================================
+// AI CHAT APPLICATION - Frontend
+// ================================================================
+
 const socket = io();
 
 // DOM elements
-const tabs = document.querySelectorAll('.tab');
-const textTab = document.getElementById('text-tab');
-const urlTab = document.getElementById('url-tab');
-const textInput = document.getElementById('text-input');
-const urlInput = document.getElementById('url-input');
-const charCount = document.getElementById('char-count');
-const processBtn = document.getElementById('process-btn');
-const loading = document.getElementById('loading');
-const error = document.getElementById('error');
-const errorMessage = document.getElementById('error-message');
-const sidebarToggle = document.getElementById('sidebar-toggle');
 const sidebar = document.getElementById('sidebar');
+const sidebarToggle = document.getElementById('sidebar-toggle');
 const chatsList = document.getElementById('chats-list');
 const userCountText = document.getElementById('user-count-text');
 const newChatBtn = document.getElementById('new-chat-btn');
@@ -21,10 +14,15 @@ const currentChatTitle = document.getElementById('current-chat-title');
 const renameChatBtn = document.getElementById('rename-chat-btn');
 const deleteChatBtn = document.getElementById('delete-chat-btn');
 const chatMessages = document.getElementById('chat-messages');
+const messageInput = document.getElementById('message-input');
+const sendBtn = document.getElementById('send-btn');
+const error = document.getElementById('error');
+const errorMessage = document.getElementById('error-message');
 
-let currentTab = 'text';
+// State
 let chats = {};
 let activeChat = null;
+let isProcessing = false;
 
 // Socket.io event handlers
 socket.on('connect', () => {
@@ -54,7 +52,6 @@ socket.on('chat-created', (newChat) => {
     console.log('✨ New chat created:', newChat.id);
     chats[newChat.id] = newChat;
     renderChatsList();
-    // Auto-switch to new chat
     switchToChat(newChat.id);
 });
 
@@ -115,7 +112,7 @@ socket.on('chat-deleted', (chatId) => {
     }
 });
 
-// Create new chat (with debouncing to prevent multiple clicks)
+// Create new chat
 let isCreatingChat = false;
 newChatBtn.addEventListener('click', () => {
     if (isCreatingChat) return;
@@ -126,7 +123,6 @@ newChatBtn.addEventListener('click', () => {
 
     socket.emit('create-chat');
 
-    // Re-enable after 1 second
     setTimeout(() => {
         isCreatingChat = false;
         newChatBtn.disabled = false;
@@ -165,41 +161,6 @@ sidebarToggle.addEventListener('click', () => {
     document.body.classList.toggle('sidebar-active');
 });
 
-// Tab switching
-tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-        const tabName = tab.dataset.tab;
-        currentTab = tabName;
-
-        tabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-
-        if (tabName === 'text') {
-            textTab.classList.remove('hidden');
-            urlTab.classList.add('hidden');
-        } else {
-            textTab.classList.add('hidden');
-            urlTab.classList.remove('hidden');
-        }
-
-        error.classList.add('hidden');
-    });
-});
-
-// Character counter
-textInput.addEventListener('input', () => {
-    charCount.textContent = textInput.value.length;
-});
-
-// Event delegation for chat item clicks
-chatsList.addEventListener('click', (e) => {
-    const chatItem = e.target.closest('.chat-item');
-    if (chatItem) {
-        const chatId = chatItem.dataset.chatId;
-        switchToChat(chatId);
-    }
-});
-
 // Render chats list
 function renderChatsList() {
     const chatsArray = Object.values(chats).sort((a, b) =>
@@ -221,7 +182,9 @@ function renderChatsList() {
 
     chatsList.innerHTML = chatsArray.map(chat => {
         const lastMessage = chat.messages[chat.messages.length - 1];
-        const preview = lastMessage ? lastMessage.result.substring(0, 50) + '...' : 'Пустой чат';
+        const preview = lastMessage ?
+            (lastMessage.content || lastMessage.result || '').substring(0, 50) + '...' :
+            'Пустой чат';
 
         return `
             <div class="chat-item ${chat.id === activeChat ? 'active' : ''}" data-chat-id="${chat.id}">
@@ -237,15 +200,11 @@ function renderChatsList() {
 }
 
 // Event delegation for chat items
-chatsList.addEventListener('click', (event) => {
-    let target = event.target;
-    // Traverse up the DOM to find the .chat-item
-    while (target && !target.classList.contains('chat-item')) {
-        target = target.parentElement;
-    }
-
-    if (target && target.dataset.chatId) {
-        switchToChat(target.dataset.chatId);
+chatsList.addEventListener('click', (e) => {
+    const chatItem = e.target.closest('.chat-item');
+    if (chatItem) {
+        const chatId = chatItem.dataset.chatId;
+        switchToChat(chatId);
     }
 });
 
@@ -256,8 +215,6 @@ function switchToChat(chatId) {
     activeChat = chatId;
     currentChatTitle.textContent = chats[chatId].title;
 
-    socket.emit('switch-chat', chatId);
-
     renderChatsList();
     renderChatMessages();
 
@@ -266,58 +223,34 @@ function switchToChat(chatId) {
         sidebar.classList.remove('active');
         document.body.classList.remove('sidebar-active');
     }
+
+    // Focus input
+    messageInput.focus();
 }
 
 // Render chat messages
 function renderChatMessages() {
-    if (!activeChat || !chats[activeChat]) return;
+    if (!activeChat || !chats[activeChat]) {
+        chatMessages.innerHTML = getWelcomeMessage();
+        return;
+    }
 
     const messages = chats[activeChat].messages;
 
     if (messages.length === 0) {
-        chatMessages.innerHTML = `
-            <div class="welcome-message">
-                <div class="logo">
-                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                </div>
-                <h1>Text Shortener</h1>
-                <p class="subtitle">Умное сокращение текста до 80-120 символов</p>
-                <p class="hint-text">Начните вводить текст или URL ниже</p>
-            </div>
-        `;
+        chatMessages.innerHTML = getWelcomeMessage();
         return;
     }
 
     chatMessages.innerHTML = messages.map(msg => {
-        const typeIcon = msg.type === 'url'
-            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />'
-            : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />';
+        const isUser = msg.role === 'user';
+        const avatarIcon = isUser ? '👤' : '🤖';
+        const content = msg.content || msg.result || '';
 
         return `
-            <div class="message-bubble">
-                <div class="message-header">
-                    <div class="message-type-badge">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            ${typeIcon}
-                        </svg>
-                        ${msg.type === 'url' ? 'URL' : 'Текст'}
-                    </div>
-                    <span class="message-time">${formatTime(msg.timestamp)}</span>
-                </div>
-                <div class="message-content">
-                    ${msg.original ? `<div class="message-original">${msg.original.substring(0, 200)}${msg.original.length > 200 ? '...' : ''}</div>` : ''}
-                    <div class="message-result">${msg.result}</div>
-                    <div class="message-actions">
-                        <button class="message-action-btn" onclick="copyText('${msg.result.replace(/'/g, "\\'")}')">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            Копировать
-                        </button>
-                    </div>
-                </div>
+            <div class="message-bubble ${msg.role}">
+                <div class="avatar">${avatarIcon}</div>
+                <div class="content">${isUser ? escapeHtml(content) : marked.parse(content)}</div>
             </div>
         `;
     }).join('');
@@ -326,18 +259,203 @@ function renderChatMessages() {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-// Copy text helper
-window.copyText = async function (text) {
-    try {
-        await navigator.clipboard.writeText(text);
-        // TODO: Show toast notification
-        console.log('✅ Copied to clipboard');
-    } catch (err) {
-        console.error('Failed to copy:', err);
-    }
-};
+// Welcome message
+function getWelcomeMessage() {
+    return `
+        <div class="welcome-message">
+            <div class="logo">
+                <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+            </div>
+            <h1>AI Chat</h1>
+            <p class="subtitle">Умный помощник на базе GPT-4</p>
+            <p class="hint-text">Начните разговор - напишите сообщение ниже</p>
+        </div>
+    `;
+}
 
-// Format time
+// Send message
+async function sendMessage() {
+    const message = messageInput.value.trim();
+
+    if (!message || isProcessing) return;
+    if (!activeChat) {
+        showError('Создайте чат или выберите существующий');
+        return;
+    }
+
+    // Clear input and disable
+    messageInput.value = '';
+    messageInput.disabled = true;
+    sendBtn.disabled = true;
+    isProcessing = true;
+    hideError();
+
+    // Add user message locally
+    const userMessage = {
+        id: Date.now(),
+        role: 'user',
+        content: message,
+        timestamp: new Date().toISOString()
+    };
+
+    chats[activeChat].messages.push(userMessage);
+    renderChatMessages();
+
+    // Emit to server for sync
+    socket.emit('add-message', {
+        chatId: activeChat,
+        message: userMessage
+    });
+
+    // Show typing indicator
+    showTypingIndicator();
+
+    try {
+        // Get chat history for context (last 10 messages)
+        const chatHistory = chats[activeChat].messages
+            .slice(-10)
+            .map(m => ({
+                role: m.role,
+                content: m.content || m.result
+            }));
+
+        // Call AI API with streaming
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message,
+                chatHistory: chatHistory.slice(0, -1) // Exclude the last message we just added
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'AI request failed');
+        }
+
+        // Process streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let aiMessageContent = '';
+        let aiMessageElement = null;
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+
+                    if (data === '[DONE]') {
+                        break;
+                    }
+
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.content) {
+                            aiMessageContent += parsed.content;
+
+                            // Update or create AI message bubble
+                            if (!aiMessageElement) {
+                                removeTypingIndicator();
+                                const aiMessage = {
+                                    id: Date.now() + 1,
+                                    role: 'assistant',
+                                    content: aiMessageContent,
+                                    timestamp: new Date().toISOString()
+                                };
+                                chats[activeChat].messages.push(aiMessage);
+                                renderChatMessages();
+
+                                // Get reference to the last message for live updates
+                                const messageBubbles = chatMessages.querySelectorAll('.message-bubble.assistant');
+                                aiMessageElement = messageBubbles[messageBubbles.length - 1]?.querySelector('.content');
+                            } else {
+                                // Update existing message
+                                aiMessageElement.innerHTML = marked.parse(aiMessageContent);
+                                chatMessages.scrollTop = chatMessages.scrollHeight;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error parsing chunk:', e);
+                    }
+                }
+            }
+        }
+
+        // Save final AI message to server
+        const finalAIMessage = chats[activeChat].messages[chats[activeChat].messages.length - 1];
+        socket.emit('add-message', {
+            chatId: activeChat,
+            message: finalAIMessage
+        });
+
+        // Auto-update chat title if first message
+        if (chats[activeChat].messages.length === 2 && chats[activeChat].title === 'Новый чат') {
+            const summaryTitle = message.substring(0, 30) + (message.length > 30 ? '...' : '');
+            socket.emit('update-chat-title', {
+                chatId: activeChat,
+                title: summaryTitle
+            });
+        }
+
+    } catch (err) {
+        console.error('AI Error:', err);
+        showError(err.message || 'Не удалось получить ответ от AI');
+        removeTypingIndicator();
+
+        // Remove user message if AI failed
+        chats[activeChat].messages.pop();
+        renderChatMessages();
+    } finally {
+        messageInput.disabled = false;
+        sendBtn.disabled = false;
+        isProcessing = false;
+        messageInput.focus();
+    }
+}
+
+// Typing indicator
+function showTypingIndicator() {
+    const indicator = document.createElement('div');
+    indicator.className = 'message-bubble assistant typing-bubble';
+    indicator.id = 'typing-indicator';
+    indicator.innerHTML = `
+        <div class="avatar">🤖</div>
+        <div class="content">
+            <div class="typing-indicator">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+    `;
+    chatMessages.appendChild(indicator);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function removeTypingIndicator() {
+    const indicator = document.getElementById('typing-indicator');
+    if (indicator) indicator.remove();
+}
+
+// Error handling
+function showError(msg) {
+    error.classList.remove('hidden');
+    errorMessage.textContent = msg;
+}
+
+function hideError() {
+    error.classList.add('hidden');
+}
+
+// Utility functions
 function formatTime(timestamp) {
     const date = new Date(timestamp);
     const now = new Date();
@@ -356,176 +474,20 @@ function formatTime(timestamp) {
     });
 }
 
-// Smart text shortening algorithm
-function shortenText(text, minLength = 80, maxLength = 120) {
-    text = text.trim().replace(/\s+/g, ' ');
-
-    if (text.length <= maxLength) {
-        return text;
-    }
-
-    const sentenceEndings = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
-    let bestBreak = -1;
-
-    for (let ending of sentenceEndings) {
-        let pos = text.indexOf(ending, minLength);
-        if (pos > 0 && pos <= maxLength) {
-            bestBreak = pos + 1;
-            break;
-        }
-    }
-
-    if (bestBreak > 0) {
-        return text.substring(0, bestBreak).trim();
-    }
-
-    const punctuation = [', ', '; ', ' - '];
-    for (let punct of punctuation) {
-        let pos = text.lastIndexOf(punct, maxLength);
-        if (pos >= minLength) {
-            return text.substring(0, pos).trim() + '...';
-        }
-    }
-
-    let lastSpace = text.lastIndexOf(' ', maxLength);
-    if (lastSpace >= minLength) {
-        return text.substring(0, lastSpace).trim() + '...';
-    }
-
-    return text.substring(0, maxLength - 3).trim() + '...';
-}
-
-// Show/hide functions
-function showError(message) {
-    error.classList.remove('hidden');
-    errorMessage.textContent = message;
-    loading.classList.add('hidden');
-}
-
-function hideError() {
-    error.classList.add('hidden');
-}
-
-function showLoading() {
-    loading.classList.remove('hidden');
-    hideError();
-}
-
-function hideLoading() {
-    loading.classList.add('hidden');
-}
-
-// Process text
-async function processText() {
-    if (!activeChat) {
-        showError('Создайте или выберите чат');
-        return;
-    }
-
-    hideError();
-
-    if (currentTab === 'text') {
-        const text = textInput.value.trim();
-
-        if (!text) {
-            showError('Пожалуйста, введите текст для сокращения');
-            return;
-        }
-
-        if (text.length < 80) {
-            showError('Текст слишком короткий. Минимальная длина: 80 символов');
-            return;
-        }
-
-        showLoading();
-
-        setTimeout(() => {
-            const shortened = shortenText(text);
-
-            // Send to server
-            socket.emit('new-message', {
-                chatId: activeChat,
-                message: {
-                    type: 'text',
-                    original: text,
-                    result: shortened
-                }
-            });
-
-            hideLoading();
-            textInput.value = '';
-            charCount.textContent = '0';
-
-        }, 500);
-
-    } else {
-        const url = urlInput.value.trim();
-
-        if (!url) {
-            showError('Пожалуйста, введите URL');
-            return;
-        }
-
-        showLoading();
-
-        try {
-            const response = await fetch('/api/fetch-url', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ url })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Ошибка при загрузке URL');
-            }
-
-            const shortened = shortenText(data.text);
-
-            // Send to server
-            socket.emit('new-message', {
-                chatId: activeChat,
-                message: {
-                    type: 'url',
-                    original: data.text,
-                    result: shortened
-                }
-            });
-
-            hideLoading();
-            urlInput.value = '';
-
-        } catch (err) {
-            console.error('Error:', err);
-            hideLoading();
-            showError(err.message || 'Не удалось обработать URL');
-        }
-    }
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Event listeners
-processBtn.addEventListener('click', processText);
+sendBtn.addEventListener('click', sendMessage);
 
-urlInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        processText();
+messageInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
     }
 });
 
-textInput.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        processText();
-    }
-});
-
-// Connection status
-socket.on('connect_error', () => {
-    console.error('❌ Failed to connect to server');
-});
-
-socket.on('disconnect', () => {
-    console.log('🔌 Disconnected from server');
-});
+console.log('🤖 AI Chat ready!');

@@ -4,11 +4,13 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const path = require('path');
 const http = require('http');
-const { Server } = require('socket.io');
+const socketIo = require('socket.io'); // Changed from { Server }
+const Groq = require('groq-sdk');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
+const io = socketIo(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
@@ -16,6 +18,11 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// Initialize Groq (Free AI)
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY || 'gsk_VGxhbWEzaXNGcmVlQW5kRmFzdA'
+});
 
 // In-memory storage for chats (ChatGPT-style)
 // Structure: { chatId: { id, title, createdAt, messages: [] } }
@@ -157,6 +164,67 @@ app.post('/api/fetch-url', async (req, res) => {
   }
 });
 
+// AI Chat endpoint with streaming
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, chatHistory = [] } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    // Prepare messages for Groq
+    const messages = [
+      {
+        role: 'system',
+        content: 'Ты умный и полезный AI ассистент. Отвечай четко, по делу. Поддерживай markdown форматирование для кода и списков.'
+      },
+      ...chatHistory.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      })),
+      { role: 'user', content: message }
+    ];
+
+    // Set headers for streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Create streaming completion with Groq
+    const stream = await groq.chat.completions.create({
+      model: 'llama3-70b-8192', // Free Llama 3 model
+      messages: messages,
+      stream: true,
+      temperature: 0.7,
+      max_tokens: 2000
+    });
+
+    // Stream the response
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+
+  } catch (error) {
+    console.error('AI Chat error:', error);
+
+    if (error.status === 429) {
+      return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+    }
+
+    res.status(500).json({
+      error: 'Failed to generate AI response',
+      details: error.message
+    });
+  }
+});
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   connectedUsers++;
@@ -247,17 +315,17 @@ io.on('connection', (socket) => {
 
     console.log(`✏️ Chat title updated: ${chatId} -> ${title}`);
   });
-  
+
   // Handle chat deletion
   socket.on('delete-chat', (chatId) => {
     if (!chats[chatId]) {
       console.error(`❌ Chat not found: ${chatId}`);
       return;
     }
-    
+
     delete chats[chatId];
     io.emit('chat-deleted', chatId);
-    
+
     console.log(`🗑️ Chat deleted: ${chatId}`);
   });
 
