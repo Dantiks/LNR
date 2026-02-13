@@ -1238,6 +1238,16 @@ h1 {
     border: 1px solid rgba(34, 197, 94, 0.3);
 }
 
+
+
+/* Content wrapper for AI messages */
+.message-bubble .content-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
 .message-bubble .content {
     flex: 1;
     color: #e5e7eb;
@@ -1309,6 +1319,49 @@ h1 {
     padding-left: 1rem;
     margin: 0.75rem 0;
     color: rgba(229, 231, 235, 0.8);
+}
+
+/* Copy button */
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: var(--border-radius-sm);
+    color: var(--primary-light);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.copy-btn svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2;
+    transition: var(--transition);
+}
+
+.copy-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.4);
+    transform: translateY(-1px);
+}
+
+.copy-btn:active {
+    transform: translateY(0);
+}
+
+.copy-btn.copied {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.3);
+    color: var(--success-color);
+}
+
+.copy-btn.copied svg {
+    transform: scale(1.1);
 }
 
 /* Typing indicator */

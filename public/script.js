@@ -275,7 +275,7 @@ function renderChatMessages() {
         return;
     }
 
-    chatMessages.innerHTML = messages.map(msg => {
+    chatMessages.innerHTML = messages.map((msg, index) => {
         const isUser = msg.role === 'user';
         const avatarIcon = isUser ? '👤' : '🤖';
         const content = msg.content || msg.result || '';
@@ -283,7 +283,18 @@ function renderChatMessages() {
         return `
             <div class="message-bubble ${msg.role}">
                 <div class="avatar">${avatarIcon}</div>
-                <div class="content">${isUser ? escapeHtml(content) : marked.parse(content)}</div>
+                <div class="content-wrapper">
+                    <div class="content">${isUser ? escapeHtml(content) : marked.parse(content)}</div>
+                    ${!isUser ? `
+                        <button class="copy-btn" data-message-index="${index}" title="Копировать">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <span class="copy-text">Копировать</span>
+                        </button>
+                    ` : ''}
+                </div>
             </div>
         `;
     }).join('');
@@ -535,6 +546,38 @@ messageInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
+    }
+});
+
+// Copy button functionality
+chatMessages.addEventListener('click', (e) => {
+    const copyBtn = e.target.closest('.copy-btn');
+    if (copyBtn) {
+        const messageIndex = parseInt(copyBtn.dataset.messageIndex);
+        const message = chats[activeChat].messages[messageIndex];
+        const content = message.content || message.result || '';
+
+        // Copy to clipboard
+        navigator.clipboard.writeText(content).then(() => {
+            // Visual feedback
+            const originalHTML = copyBtn.innerHTML;
+            copyBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M5 13l4 4L19 7" />
+                </svg>
+                <span class="copy-text">Скопировано!</span>
+            `;
+            copyBtn.classList.add('copied');
+
+            setTimeout(() => {
+                copyBtn.innerHTML = originalHTML;
+                copyBtn.classList.remove('copied');
+            }, 2000);
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            alert('Не удалось скопировать текст');
+        });
     }
 });
 
