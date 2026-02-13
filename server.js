@@ -21,8 +21,13 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize Groq (Free AI)
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY || 'gsk_VGxhbWEzaXNGcmVlQW5kRmFzdA'
+  apiKey: process.env.GROQ_API_KEY
 });
+
+if (!process.env.GROQ_API_KEY) {
+  console.warn('⚠️  WARNING: GROQ_API_KEY not found in .env file!');
+  console.warn('📝 Get your free API key at: https://console.groq.com');
+}
 
 // In-memory storage for chats (ChatGPT-style)
 // Structure: { chatId: { id, title, createdAt, messages: [] } }
@@ -193,7 +198,7 @@ app.post('/api/chat', async (req, res) => {
 
     // Create streaming completion with Groq
     const stream = await groq.chat.completions.create({
-      model: 'llama3-70b-8192', // Free Llama 3 model
+      model: 'llama-3.1-8b-instant', // Fast and efficient model
       messages: messages,
       stream: true,
       temperature: 0.7,
@@ -214,12 +219,26 @@ app.post('/api/chat', async (req, res) => {
   } catch (error) {
     console.error('AI Chat error:', error);
 
+    // Check for missing API key
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(503).json({
+        error: 'API ключ не настроен. Добавьте GROQ_API_KEY в файл .env и перезапустите сервер.'
+      });
+    }
+
+    // Check for invalid API key
+    if (error.status === 401) {
+      return res.status(401).json({
+        error: 'Неверный API ключ. Проверьте GROQ_API_KEY в файле .env.'
+      });
+    }
+
     if (error.status === 429) {
-      return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return res.status(429).json({ error: 'Превышен лимит запросов. Попробуйте позже.' });
     }
 
     res.status(500).json({
-      error: 'Failed to generate AI response',
+      error: 'Не удалось получить ответ от AI',
       details: error.message
     });
   }
@@ -285,7 +304,8 @@ io.on('connection', (socket) => {
 
     // Auto-update chat title based on first message
     if (chats[chatId].messages.length === 1 && chats[chatId].title === 'Новый чат') {
-      const shortTitle = message.result.substring(0, 30) + (message.result.length > 30 ? '...' : '');
+      const messageText = message.content || message.result || '';
+      const shortTitle = messageText.substring(0, 30) + (messageText.length > 30 ? '...' : '');
       chats[chatId].title = shortTitle;
     }
 

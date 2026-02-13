@@ -250,19 +250,18 @@ body {
 /* Sidebar toggle button */
 .sidebar-toggle {
     position: fixed;
-    left: var(--sidebar-width);
+    left: 1.5rem;
     top: 1.5rem;
     width: 48px;
     height: 48px;
     background: rgba(99, 102, 241, 0.9);
     border: none;
-    border-radius: 0 var(--border-radius-sm) var(--border-radius-sm) 0;
+    border-radius: var(--border-radius-sm);
     color: white;
     cursor: pointer;
-    z-index: 99;
+    z-index: 150;
     transition: var(--transition);
-    display: none;
-    /* Show on mobile */
+    display: flex;
     align-items: center;
     justify-content: center;
     box-shadow: var(--shadow-md);
@@ -276,6 +275,12 @@ body {
 
 .sidebar-toggle:hover {
     background: var(--primary-dark);
+    transform: scale(1.05);
+}
+
+/* Sidebar collapsed state */
+.sidebar.collapsed {
+    transform: translateX(-100%);
 }
 
 .container {
@@ -285,7 +290,14 @@ body {
     margin-left: calc(var(--sidebar-width) + 2rem);
     padding: 2rem 1.5rem;
     z-index: 1;
-    transition: var(--transition);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Container expansion when sidebar collapsed */
+.container.sidebar-collapsed {
+    margin-left: auto !important;
+    margin-right: auto !important;
+    max-width: 900px;
 }
 
 .header {
@@ -779,6 +791,7 @@ h1 {
         padding: 0.75rem;
     }
 }
+
 /* Chat Sessions UI Styles */
 .new-chat-btn {
     width: 100%;
@@ -914,7 +927,7 @@ h1 {
     font-weight: 600;
     text-align: center;
     background: linear-gradient(135deg, var(--primary-light), var(--secondary-color));
-   -webkit-background-clip: text;
+    -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
@@ -944,9 +957,11 @@ h1 {
 }
 
 .chat-messages {
+    max-width: 800px;
+    margin: 0 auto;
     max-height: 60vh;
     overflow-y: auto;
-    padding: 1rem 0;
+    padding: 1rem;
     margin-bottom: 2rem;
 }
 
@@ -1074,11 +1089,11 @@ h1 {
     .chat-messages {
         max-height: 50vh;
     }
-    
+
     .message-bubble {
         margin-bottom: 1rem;
     }
-    
+
     .current-chat-title {
         font-size: 1.5rem;
     }
@@ -1096,6 +1111,7 @@ h1 {
     border-color: rgba(239, 68, 68, 0.5) !important;
     color: var(--error-color) !important;
 }
+
 /* ============================================
    AI CHAT INPUT STYLES
    ============================================ */
@@ -1114,7 +1130,7 @@ h1 {
     display: flex;
     gap: 0.75rem;
     align-items: center;
-    max-width: 900px;
+    max-width: 800px;
     margin: 0 auto;
 }
 
@@ -1347,4 +1363,58 @@ h1 {
         font-size: 16px;
         /* Prevent zoom on mobile */
     }
+}
+
+/* Chat item action buttons */
+.chat-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.chat-item-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-item-actions {
+    display: flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.chat-item:hover .chat-item-actions {
+    opacity: 1;
+}
+
+.chat-action-btn {
+    padding: 0.4rem;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 6px;
+    color: #a5b4fc;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-action-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.4);
+    transform: scale(1.05);
+}
+
+.chat-action-btn.delete-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+
+.chat-action-btn svg {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2.5;
 }

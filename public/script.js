@@ -11,8 +11,6 @@ const chatsList = document.getElementById('chats-list');
 const userCountText = document.getElementById('user-count-text');
 const newChatBtn = document.getElementById('new-chat-btn');
 const currentChatTitle = document.getElementById('current-chat-title');
-const renameChatBtn = document.getElementById('rename-chat-btn');
-const deleteChatBtn = document.getElementById('delete-chat-btn');
 const chatMessages = document.getElementById('chat-messages');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
@@ -130,36 +128,23 @@ newChatBtn.addEventListener('click', () => {
     }, 1000);
 });
 
-// Rename chat
-renameChatBtn.addEventListener('click', () => {
-    if (!activeChat) return;
-
-    const newTitle = prompt('Введите новое название чата:', chats[activeChat].title);
-    if (newTitle && newTitle.trim()) {
-        socket.emit('update-chat-title', {
-            chatId: activeChat,
-            title: newTitle.trim()
-        });
-    }
-});
-
-// Delete chat
-deleteChatBtn.addEventListener('click', () => {
-    if (!activeChat) return;
-
-    const chatTitle = chats[activeChat].title;
-    const confirmed = confirm(`Вы уверены, что хотите удалить чат "${chatTitle}"?`);
-
-    if (confirmed) {
-        socket.emit('delete-chat', activeChat);
-    }
-});
-
-// Toggle sidebar (mobile)
+// Toggle sidebar
 sidebarToggle.addEventListener('click', () => {
-    sidebar.classList.toggle('active');
-    document.body.classList.toggle('sidebar-active');
+    sidebar.classList.toggle('collapsed');
+    const container = document.querySelector('.container');
+    container.classList.toggle('sidebar-collapsed');
+
+    // Save state to localStorage
+    const isCollapsed = sidebar.classList.contains('collapsed');
+    localStorage.setItem('sidebarCollapsed', isCollapsed);
 });
+
+// Restore sidebar state on load
+if (localStorage.getItem('sidebarCollapsed') === 'true') {
+    sidebar.classList.add('collapsed');
+    const container = document.querySelector('.container');
+    container.classList.add('sidebar-collapsed');
+}
 
 // Render chats list
 function renderChatsList() {
@@ -188,19 +173,67 @@ function renderChatsList() {
 
         return `
             <div class="chat-item ${chat.id === activeChat ? 'active' : ''}" data-chat-id="${chat.id}">
-                <div class="chat-item-title">${chat.title}</div>
-                <div class="chat-item-preview">${preview}</div>
-                <div class="chat-item-meta">
-                    <span class="chat-item-time">${formatTime(chat.createdAt)}</span>
-                    ${chat.messages.length > 0 ? `<span class="chat-item-count">${chat.messages.length}</span>` : ''}
+                <div class="chat-item-main">
+                    <div class="chat-item-title">${chat.title}</div>
+                    <div class="chat-item-preview">${preview}</div>
+                    <div class="chat-item-meta">
+                        <span class="chat-item-time">${formatTime(chat.createdAt)}</span>
+                        ${chat.messages.length > 0 ? `<span class="chat-item-count">${chat.messages.length}</span>` : ''}
+                    </div>
+                </div>
+                <div class="chat-item-actions">
+                    <button class="chat-action-btn rename-btn" data-chat-id="${chat.id}" title="Переименовать">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                    </button>
+                    <button class="chat-action-btn delete-btn" data-chat-id="${chat.id}" title="Удалить">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                    </button>
                 </div>
             </div>
         `;
     }).join('');
 }
 
-// Event delegation for chat items
+// Event delegation for chat items and action buttons
 chatsList.addEventListener('click', (e) => {
+    // Rename button
+    if (e.target.closest('.rename-btn')) {
+        e.stopPropagation();
+        const chatId = e.target.closest('.rename-btn').dataset.chatId;
+        const chat = chats[chatId];
+        if (chat) {
+            const newTitle = prompt('Введите новое название чата:', chat.title);
+            if (newTitle && newTitle.trim()) {
+                socket.emit('update-chat-title', {
+                    chatId: chatId,
+                    title: newTitle.trim()
+                });
+            }
+        }
+        return;
+    }
+
+    // Delete button
+    if (e.target.closest('.delete-btn')) {
+        e.stopPropagation();
+        const chatId = e.target.closest('.delete-btn').dataset.chatId;
+        const chat = chats[chatId];
+        if (chat) {
+            const confirmed = confirm(`Вы уверены, что хотите удалить чат "${chat.title}"?`);
+            if (confirmed) {
+                socket.emit('delete-chat', chatId);
+            }
+        }
+        return;
+    }
+
+    // Click on chat item to switch
     const chatItem = e.target.closest('.chat-item');
     if (chatItem) {
         const chatId = chatItem.dataset.chatId;
@@ -305,7 +338,7 @@ async function sendMessage() {
     renderChatMessages();
 
     // Emit to server for sync
-    socket.emit('add-message', {
+    socket.emit('new-message', {
         chatId: activeChat,
         message: userMessage
     });
@@ -379,7 +412,11 @@ async function sendMessage() {
                                 const messageBubbles = chatMessages.querySelectorAll('.message-bubble.assistant');
                                 aiMessageElement = messageBubbles[messageBubbles.length - 1]?.querySelector('.content');
                             } else {
-                                // Update existing message
+                                // Update existing message content in the array
+                                const lastMessage = chats[activeChat].messages[chats[activeChat].messages.length - 1];
+                                lastMessage.content = aiMessageContent;
+
+                                // Update DOM
                                 aiMessageElement.innerHTML = marked.parse(aiMessageContent);
                                 chatMessages.scrollTop = chatMessages.scrollHeight;
                             }
@@ -393,7 +430,7 @@ async function sendMessage() {
 
         // Save final AI message to server
         const finalAIMessage = chats[activeChat].messages[chats[activeChat].messages.length - 1];
-        socket.emit('add-message', {
+        socket.emit('new-message', {
             chatId: activeChat,
             message: finalAIMessage
         });
@@ -409,12 +446,23 @@ async function sendMessage() {
 
     } catch (err) {
         console.error('AI Error:', err);
-        showError(err.message || 'Не удалось получить ответ от AI');
         removeTypingIndicator();
 
-        // Remove user message if AI failed
-        chats[activeChat].messages.pop();
+        // Keep user message visible, add error message as assistant response
+        const errorMessage = {
+            id: Date.now() + 1,
+            role: 'assistant',
+            content: `⚠️ **Ошибка**: ${err.message || 'Не удалось получить ответ от AI'}\n\nВозможные причины:\n- API ключ не настроен\n- Проблемы с подключением\n- Превышен лимит запросов`,
+            timestamp: new Date().toISOString()
+        };
+
+        chats[activeChat].messages.push(errorMessage);
         renderChatMessages();
+
+        socket.emit('new-message', {
+            chatId: activeChat,
+            message: errorMessage
+        });
     } finally {
         messageInput.disabled = false;
         sendBtn.disabled = false;
