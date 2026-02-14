@@ -34,6 +34,22 @@ if (!process.env.GROQ_API_KEY) {
 let chats = {};
 let connectedUsers = 0;
 
+// Request queue for rate limit management
+let requestQueue = [];
+let isProcessingQueue = false;
+
+// Simple cache for identical requests (expires after 5 minutes)
+const requestCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Statistics
+let stats = {
+  totalRequests: 0,
+  cacheHits: 0,
+  queuedRequests: 0,
+  retries: 0
+};
+
 // Create initial default chat
 const defaultChatId = 'chat-' + Date.now();
 chats[defaultChatId] = {
@@ -169,16 +185,83 @@ app.post('/api/fetch-url', async (req, res) => {
   }
 });
 
-// AI Chat endpoint with streaming
+// Helper function to create cache key
+function getCacheKey(messages) {
+  return JSON.stringify(messages);
+}
+
+// Process request queue
+async function processQueue() {
+  if (isProcessingQueue || requestQueue.length === 0) return;
+
+  isProcessingQueue = true;
+  const { messages, res, resolve, reject } = requestQueue.shift();
+
+  try {
+    await makeGroqRequest(messages, res);
+    resolve();
+  } catch (error) {
+    reject(error);
+  } finally {
+    isProcessingQueue = false;
+    // Process next in queue after small delay
+    setTimeout(processQueue, 100);
+  }
+}
+
+// Make actual Groq API request with aggressive retry
+async function makeGroqRequest(messages, res) {
+  let retries = 0;
+  const maxRetries = 10; // Increased from 5 to 10
+  let stream;
+
+  while (retries <= maxRetries) {
+    try {
+      stream = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: messages,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 4000
+      });
+      break; // Success
+    } catch (retryError) {
+      if (retryError.status === 429 && retries < maxRetries) {
+        // Faster backoff: 0.5s, 1s, 2s, 4s, 8s...
+        const waitTime = Math.pow(2, retries) * 500;
+        stats.retries++;
+        console.log(`⏳ Retry ${retries + 1}/${maxRetries} in ${waitTime}ms... (Total retries: ${stats.retries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        retries++;
+      } else {
+        throw retryError;
+      }
+    }
+  }
+
+  // Stream response
+  for await (const chunk of stream) {
+    const content = chunk.choices[0]?.delta?.content || '';
+    if (content) {
+      res.write(`data: ${JSON.stringify({ content })}\n\n`);
+    }
+  }
+
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
+// AI Chat endpoint with queue and cache
 app.post('/api/chat', async (req, res) => {
   try {
+    stats.totalRequests++;
     const { message, chatHistory = [] } = req.body;
 
     if (!message || !message.trim()) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Prepare messages for Groq
+    // Prepare messages
     const messages = [
       {
         role: 'system',
@@ -191,68 +274,50 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
-    // Set headers for streaming
+    // Check cache
+    const cacheKey = getCacheKey(messages);
+    const cached = requestCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      stats.cacheHits++;
+      console.log(`📦 Cache hit! (${stats.cacheHits}/${stats.totalRequests} = ${((stats.cacheHits / stats.totalRequests) * 100).toFixed(1)}%)`);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      // Send cached response
+      res.write(`data: ${JSON.stringify({ content: cached.response })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
+    // Set streaming headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Create streaming completion with Groq (with retry logic)
-    let retries = 0;
-    const maxRetries = 5;
-    let stream;
-
-    while (retries <= maxRetries) {
-      try {
-        stream = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile', // Powerful 70B model with better reasoning
-          messages: messages,
-          stream: true,
-          temperature: 0.7,
-          max_tokens: 4000
-        });
-        break; // Success, exit retry loop
-      } catch (retryError) {
-        if (retryError.status === 429 && retries < maxRetries) {
-          // Rate limit hit, wait and retry
-          const waitTime = Math.pow(2, retries) * 1000; // Exponential backoff
-          console.log(`⏳ Rate limit hit, retrying in ${waitTime}ms (attempt ${retries + 1}/${maxRetries})...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-          retries++;
-        } else {
-          throw retryError; // Rethrow if not rate limit or max retries reached
-        }
-      }
-    }
-
-    // Stream the response
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content || '';
-      if (content) {
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
-      }
-    }
-
-    res.write('data: [DONE]\n\n');
-    res.end();
+    // Add to queue or process immediately
+    stats.queuedRequests++;
+    await new Promise((resolve, reject) => {
+      requestQueue.push({ messages, res, resolve, reject });
+      console.log(`📋 Request queued (${requestQueue.length} in queue, ${stats.queuedRequests} total queued)`);
+      processQueue();
+    });
 
   } catch (error) {
     console.error('AI Chat error:', error);
 
-    // Check for missing API key
     if (!process.env.GROQ_API_KEY) {
       return res.status(503).json({
         error: 'API ключ не настроен. Добавьте GROQ_API_KEY в файл .env и перезапустите сервер.'
       });
     }
 
-    // Check for invalid API key
     if (error.status === 401) {
       return res.status(401).json({
         error: 'Неверный API ключ. Проверьте GROQ_API_KEY в файле .env.'
       });
     }
-
-    // Removed rate limit error - it's handled by retry logic above
 
     res.status(500).json({
       error: 'Не удалось получить ответ от AI',
