@@ -196,14 +196,33 @@ app.post('/api/chat', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Create streaming completion with Groq
-    const stream = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile', // Powerful 70B model with better reasoning
-      messages: messages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 4000
-    });
+    // Create streaming completion with Groq (with retry logic)
+    let retries = 0;
+    const maxRetries = 5;
+    let stream;
+
+    while (retries <= maxRetries) {
+      try {
+        stream = await groq.chat.completions.create({
+          model: 'llama-3.3-70b-versatile', // Powerful 70B model with better reasoning
+          messages: messages,
+          stream: true,
+          temperature: 0.7,
+          max_tokens: 4000
+        });
+        break; // Success, exit retry loop
+      } catch (retryError) {
+        if (retryError.status === 429 && retries < maxRetries) {
+          // Rate limit hit, wait and retry
+          const waitTime = Math.pow(2, retries) * 1000; // Exponential backoff
+          console.log(`⏳ Rate limit hit, retrying in ${waitTime}ms (attempt ${retries + 1}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          retries++;
+        } else {
+          throw retryError; // Rethrow if not rate limit or max retries reached
+        }
+      }
+    }
 
     // Stream the response
     for await (const chunk of stream) {
@@ -233,9 +252,7 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    if (error.status === 429) {
-      return res.status(429).json({ error: 'Превышен лимит запросов. Попробуйте позже.' });
-    }
+    // Removed rate limit error - it's handled by retry logic above
 
     res.status(500).json({
       error: 'Не удалось получить ответ от AI',
