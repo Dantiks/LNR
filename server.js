@@ -182,7 +182,7 @@ app.post('/api/chat', async (req, res) => {
     const messages = [
       {
         role: 'system',
-        content: 'Ты умный и полезный AI ассистент. Отвечай четко, по делу. Поддерживай markdown форматирование для кода и списков.'
+        content: 'Ты умный AI ассистент. Отвечай КРАТКО, ЧЕТКО и ПО ДЕЛУ - без воды и лишних слов. Используй markdown для кода и списков. Будь максимально конкретным и полезным.'
       },
       ...chatHistory.map(msg => ({
         role: msg.role,
@@ -198,11 +198,11 @@ app.post('/api/chat', async (req, res) => {
 
     // Create streaming completion with Groq
     const stream = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant', // Fast and efficient model
+      model: 'llama-3.3-70b-versatile', // Powerful 70B model with better reasoning
       messages: messages,
       stream: true,
       temperature: 0.7,
-      max_tokens: 2000
+      max_tokens: 4000
     });
 
     // Stream the response

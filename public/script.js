@@ -358,9 +358,9 @@ async function sendMessage() {
     showTypingIndicator();
 
     try {
-        // Get chat history for context (last 10 messages)
+        // Get chat history for context (last 20 messages)
         const chatHistory = chats[activeChat].messages
-            .slice(-10)
+            .slice(-20)
             .map(m => ({
                 role: m.role,
                 content: m.content || m.result
