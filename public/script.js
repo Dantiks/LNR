@@ -459,11 +459,11 @@ async function sendMessage() {
         console.error('AI Error:', err);
         removeTypingIndicator();
 
-        // Keep user message visible, add error message as assistant response
+        // Show friendly message - NEVER show technical errors
         const errorMessage = {
             id: Date.now() + 1,
             role: 'assistant',
-            content: `⚠️ **Ошибка**: ${err.message || 'Не удалось получить ответ от AI'}\n\nВозможные причины:\n- API ключ не настроен\n- Проблемы с подключением\n- Превышен лимит запросов`,
+            content: '😊 Извините, сейчас очень много запросов. Попробуйте еще раз через пару секунд!',
             timestamp: new Date().toISOString()
         };
 
