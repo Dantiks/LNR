@@ -25,43 +25,14 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
 });
 
-// Hugging Face API (Fallback - FREE text-to-text model)
-// Using Google Flan-T5 - works well for QA
-const HF_API_URL = 'https://api-inference.huggingface.co/models/google/flan-t5-large';
-
-async function callHuggingFace(messages) {
-  // Extract user question
-  const userMessage = messages[messages.length - 1]?.content || 'Привет';
-
-  try {
-    const response = await axios.post(HF_API_URL, {
-      inputs: userMessage,
-      parameters: {
-        max_new_tokens: 200,
-        temperature: 0.7,
-        top_p: 0.9,
-        do_sample: true
-      }
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000 // 15 sec timeout
-    });
-
-    // Flan-T5 returns array with generated_text
-    if (response.data && Array.isArray(response.data) && response.data[0]?.generated_text) {
-      return response.data[0].generated_text;
-    }
-
-    // Fallback
-    return `Ответ на "${userMessage.substring(0, 50)}...": попробуйте переформулировать вопрос.`;
-  } catch (error) {
-    console.error(`HF Error:`, error.message);
-    // Graceful fallback
-    return `Отвечу как только освобожусь. Ваш вопрос: "${userMessage.substring(0, 50)}..."`;
-  }
-}
+// Import clean AI request functions
+const {
+  tryGroqRequest,
+  tryHuggingFaceRequest,
+  streamResponse,
+  sendSimpleResponse,
+  makeAIRequest
+} = require('./ai-requests');
 
 if (!process.env.GROQ_API_KEY) {
   console.warn('⚠️  WARNING: GROQ_API_KEY not found in .env file!');
@@ -74,10 +45,6 @@ let connectedUsers = 0;
 
 console.log(`📦 Loaded ${Object.keys(chats).length} chats from database`);
 
-// Request queue for rate limit management
-let requestQueue = [];
-let isProcessingQueue = false;
-
 // Simple cache for identical requests (expires after 5 minutes)
 const requestCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -85,9 +52,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 // Statistics
 let stats = {
   totalRequests: 0,
-  cacheHits: 0,
-  queuedRequests: 0,
-  retries: 0
+  cacheHits: 0
 };
 
 // Create initial default chat if none exist
@@ -241,92 +206,9 @@ app.post('/api/fetch-url', async (req, res) => {
     });
   }
 });
-
 // Helper function to create cache key
 function getCacheKey(messages) {
   return JSON.stringify(messages);
-}
-
-// Process request queue
-async function processQueue() {
-  if (isProcessingQueue || requestQueue.length === 0) return;
-
-  isProcessingQueue = true;
-  const { messages, res, resolve, reject } = requestQueue.shift();
-
-  try {
-    await makeAIRequest(messages, res);
-    resolve();
-  } catch (error) {
-    reject(error);
-  } finally {
-    isProcessingQueue = false;
-    // Process next in queue after small delay
-    setTimeout(processQueue, 100);
-  }
-}
-
-// Make AI request with GUARANTEED multi-provider fallback
-async function makeAIRequest(messages, res) {
-  let groqSucceeded = false;
-  let stream = null;
-
-  // TRY GROQ (fast, high quality) with exponential backoff
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      stream = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        messages: messages,
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 4000
-      });
-      groqSucceeded = true;
-      console.log(`✅ Groq succeeded on attempt ${attempt + 1}`);
-      break;
-    } catch (error) {
-      console.log(`❌ Groq attempt ${attempt + 1}/3 failed: ${error.message || error.status}`);
-      if (attempt < 2) {
-        const wait = Math.pow(2, attempt) * 500;
-        await new Promise(r => setTimeout(r, wait));
-      }
-    }
-  }
-
-  // If Groq succeeded, stream response
-  if (groqSucceeded && stream) {
-    try {
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          res.write(`data: ${JSON.stringify({ content })}\n\n`);
-        }
-      }
-      res.write('data: [DONE]\n\n');
-      res.end();
-      console.log('✅ Groq streaming complete');
-      return;
-    } catch (streamError) {
-      console.error(`❌ Groq stream error: ${streamError.message}`);
-      // Fall through to HuggingFace
-    }
-  }
-
-  // FALLBACK TO HUGGINGFACE (unlimited but slower)
-  console.log('🔄 Using Hugging Face fallback...');
-  try {
-    const hfResponse = await callHuggingFace(messages);
-    res.write(`data: ${JSON.stringify({ content: hfResponse })}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
-    console.log('✅ HuggingFace complete');
-  } catch (hfError) {
-    console.error(`❌ HuggingFace error: ${hfError.message}`);
-    // LAST RESORT: generic message
-    res.write(`data: ${JSON.stringify({ content: 'AI временно недоступен. Попробуйте через 30 секунд.' })}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
-  }
 }
 
 // AI Chat endpoint with queue and cache
@@ -369,18 +251,13 @@ app.post('/api/chat', async (req, res) => {
       return res.end();
     }
 
-    // Set streaming headers
+    // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Add to queue or process immediately
-    stats.queuedRequests++;
-    await new Promise((resolve, reject) => {
-      requestQueue.push({ messages, res, resolve, reject });
-      console.log(`📋 Request queued (${requestQueue.length} in queue, ${stats.queuedRequests} total queued)`);
-      processQueue();
-    });
+    // Call AI directly (no queue - parallel processing)
+    await makeAIRequest(messages, res);
 
   } catch (error) {
     console.error('AI Chat error:', error);
