@@ -325,10 +325,11 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Add timestamp and ID to message
+    // Add metadata with default type
     const messageWithMeta = {
       id: Date.now() + Math.random(),
       timestamp: new Date().toISOString(),
+      type: message.type || 'text', // Default to 'text' if not provided
       ...message
     };
 

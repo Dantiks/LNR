@@ -44,42 +44,69 @@ async function tryGroqRequest(messages, maxRetries = 3) {
 
 // ================================================================
 // 2. HUGGINGFACE REQUEST  
-// Попытка запроса к HuggingFace (БЕЗ API ключа)
-// Использует Falcon-7B-Instruct для chat
+// Попытка запроса к HuggingFace (С API ключом)
+// Использует Google Flan-T5-Base (ПРОВЕРЕНО - работает с ключом)
 // Возвращает: { success: boolean, content: string }
 // ================================================================
 async function tryHuggingFaceRequest(messages) {
     const userMessage = messages[messages.length - 1]?.content || 'Привет';
 
-    // Falcon-7B-Instruct - chat-optimized, works without API key
-    const HF_API_URL = 'https://api-inference.huggingface.co/models/tiiuae/falcon-7b-instruct';
+    // Google Flan-T5-Base - FREE with API token
+    const HF_API_URL = 'https://router.huggingface.co/models/google/flan-t5-base';
+
+    // Check if HF token is available
+    if (!process.env.HUGGINGFACE_TOKEN) {
+        console.log('⚠️ HUGGINGFACE_TOKEN not set - HF fallback unavailable');
+        return { success: false, content: null };
+    }
 
     try {
         const response = await axios.post(HF_API_URL, {
             inputs: userMessage,
             parameters: {
-                max_new_tokens: 300,
-                temperature: 0.8,
-                top_p: 0.9,
-                repetition_penalty: 1.2
+                max_new_tokens: 200,
+                temperature: 0.7
+            },
+            options: {
+                wait_for_model: true  // Wait if model is loading
             }
         }, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 20000 // 20 sec
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.HUGGINGFACE_TOKEN}`
+            },
+            timeout: 30000 // 30 sec
         });
 
-        // Falcon returns array with generated_text
-        if (response.data && Array.isArray(response.data) && response.data[0]?.generated_text) {
-            const text = response.data[0].generated_text.trim();
-            console.log('✅ HuggingFace (Falcon) success');
-            return { success: true, content: text };
+        // Check response format
+        if (response.data) {
+            let text = '';
+
+            // Handle array response
+            if (Array.isArray(response.data) && response.data[0]?.generated_text) {
+                text = response.data[0].generated_text.trim();
+            }
+            // Handle direct text
+            else if (typeof response.data === 'string') {
+                text = response.data.trim();
+            }
+            // Handle object with text
+            else if (response.data.generated_text) {
+                text = response.data.generated_text.trim();
+            }
+
+            if (text) {
+                console.log('✅ HuggingFace (Flan-T5) success');
+                return { success: true, content: text };
+            }
         }
 
         // No valid response
+        console.log('❌ HuggingFace: Invalid response format');
         return { success: false, content: null };
 
     } catch (error) {
-        console.error(`❌ HuggingFace error: ${error.message}`);
+        console.error(`❌ HuggingFace error: ${error.response?.status || error.message}`);
         return { success: false, content: null };
     }
 }
