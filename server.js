@@ -4,8 +4,9 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const path = require('path');
 const http = require('http');
-const socketIo = require('socket.io'); // Changed from { Server }
+const socketIo = require('socket.io');
 const Groq = require('groq-sdk');
+const db = require('./database'); // SQLite database
 require('dotenv').config();
 
 const app = express();
@@ -19,20 +20,49 @@ const io = socketIo(server, {
 
 const PORT = process.env.PORT || 3000;
 
-// Initialize Groq (Free AI)
+// Initialize Groq (Primary AI - Fast & High Quality)
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
 });
+
+// Hugging Face API (Fallback - Slower but Unlimited)
+const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || 'hf_placeholder';
+const HF_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2';
+
+async function callHuggingFace(messages) {
+  const prompt = messages.map(m => {
+    if (m.role === 'system') return `[INST] ${m.content} [/INST]`;
+    if (m.role === 'user') return `[INST] ${m.content} [/INST]`;
+    return m.content;
+  }).join('\n');
+
+  const response = await axios.post(HF_API_URL, {
+    inputs: prompt,
+    parameters: {
+      max_new_tokens: 500,
+      temperature: 0.7,
+      return_full_text: false
+    }
+  }, {
+    headers: {
+      'Authorization': `Bearer ${HF_API_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  return response.data[0]?.generated_text || 'Ошибка генерации';
+}
 
 if (!process.env.GROQ_API_KEY) {
   console.warn('⚠️  WARNING: GROQ_API_KEY not found in .env file!');
   console.warn('📝 Get your free API key at: https://console.groq.com');
 }
 
-// In-memory storage for chats (ChatGPT-style)
-// Structure: { chatId: { id, title, createdAt, messages: [] } }
-let chats = {};
+// Load chats from database (persistent storage)
+let chats = db.loadAllChats();
 let connectedUsers = 0;
+
+console.log(`📦 Loaded ${Object.keys(chats).length} chats from database`);
 
 // Request queue for rate limit management
 let requestQueue = [];
@@ -50,18 +80,35 @@ let stats = {
   retries: 0
 };
 
-// Create initial default chat
-const defaultChatId = 'chat-' + Date.now();
-chats[defaultChatId] = {
-  id: defaultChatId,
-  title: 'Новый чат',
-  createdAt: new Date().toISOString(),
-  messages: []
-};
+// Create initial default chat if none exist
+if (Object.keys(chats).length === 0) {
+  const defaultChatId = 'chat-' + Date.now();
+  chats[defaultChatId] = {
+    id: defaultChatId,
+    title: 'Новый чат',
+    createdAt: new Date().toISOString(),
+    messages: []
+  };
+  db.saveChat(chats[defaultChatId]);
+  console.log(`✨ Created default chat: ${defaultChatId}`);
+}
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Health check endpoint (for keep-alive)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    chats: Object.keys(chats).length,
+    users: connectedUsers,
+    uptime: process.uptime()
+  });
+});
+
+// Start keep-alive system
+require('./keep-alive');
 
 // Endpoint for fetching and extracting text from URL
 app.post('/api/fetch-url', async (req, res) => {
@@ -198,7 +245,7 @@ async function processQueue() {
   const { messages, res, resolve, reject } = requestQueue.shift();
 
   try {
-    await makeGroqRequest(messages, res);
+    await makeAIRequest(messages, res);
     resolve();
   } catch (error) {
     reject(error);
@@ -209,12 +256,14 @@ async function processQueue() {
   }
 }
 
-// Make actual Groq API request with aggressive retry
-async function makeGroqRequest(messages, res) {
+// Make AI request with multi-provider fallback
+async function makeAIRequest(messages, res) {
   let retries = 0;
-  const maxRetries = 10; // Increased from 5 to 10
+  const maxRetries = 10;
   let stream;
+  let usedProvider = 'groq';
 
+  // Try Groq first (fast & high quality)
   while (retries <= maxRetries) {
     try {
       stream = await groq.chat.completions.create({
@@ -227,19 +276,33 @@ async function makeGroqRequest(messages, res) {
       break; // Success
     } catch (retryError) {
       if (retryError.status === 429 && retries < maxRetries) {
-        // Faster backoff: 0.5s, 1s, 2s, 4s, 8s...
         const waitTime = Math.pow(2, retries) * 500;
         stats.retries++;
-        console.log(`⏳ Retry ${retries + 1}/${maxRetries} in ${waitTime}ms... (Total retries: ${stats.retries})`);
+        console.log(`⏳ Groq retry ${retries + 1}/${maxRetries} in ${waitTime}ms... (Total retries: ${stats.retries})`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         retries++;
       } else {
-        throw retryError;
+        // All Groq retries exhausted, try Hugging Face fallback
+        console.log('🔄 Groq failed, switching to Hugging Face...');
+        try {
+          usedProvider = 'huggingface';
+          const hfResponse = await callHuggingFace(messages);
+
+          // Send as non-streaming response
+          res.write(`data: ${JSON.stringify({ content: hfResponse })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          console.log('✅ Response generated by Hugging Face');
+          return; // Exit successfully
+        } catch (hfError) {
+          console.error('❌ Hugging Face also failed:', hfError.message);
+          throw new Error('Оба AI провайдера недоступны. Попробуйте позже.');
+        }
       }
     }
   }
 
-  // Stream response
+  // Stream Groq response if successful
   for await (const chunk of stream) {
     const content = chunk.choices[0]?.delta?.content || '';
     if (content) {
@@ -249,6 +312,7 @@ async function makeGroqRequest(messages, res) {
 
   res.write('data: [DONE]\n\n');
   res.end();
+  console.log(`✅ Response generated by ${usedProvider}`);
 }
 
 // AI Chat endpoint with queue and cache
@@ -348,6 +412,7 @@ io.on('connection', (socket) => {
     };
 
     chats[newChatId] = newChat;
+    db.saveChat(newChat); // Save to database
 
     // Broadcast new chat to all clients
     io.emit('chat-created', newChat);
@@ -378,6 +443,7 @@ io.on('connection', (socket) => {
 
     // Add message to chat
     chats[chatId].messages.push(messageWithMeta);
+    db.saveMessage(chatId, messageWithMeta); // Save to database
 
     // Keep only last 50 messages per chat
     if (chats[chatId].messages.length > 50) {
@@ -389,6 +455,7 @@ io.on('connection', (socket) => {
       const messageText = message.content || message.result || '';
       const shortTitle = messageText.substring(0, 30) + (messageText.length > 30 ? '...' : '');
       chats[chatId].title = shortTitle;
+      db.updateTitle(chatId, shortTitle); // Save to database
     }
 
     // Broadcast message to all clients
@@ -411,6 +478,7 @@ io.on('connection', (socket) => {
     }
 
     chats[chatId].title = title;
+    db.updateTitle(chatId, title); // Save to database
 
     // Broadcast title update to all clients
     io.emit('chat-title-updated', { chatId, title });
@@ -426,6 +494,7 @@ io.on('connection', (socket) => {
     }
 
     delete chats[chatId];
+    db.deleteChat(chatId); // Delete from database
     io.emit('chat-deleted', chatId);
 
     console.log(`🗑️ Chat deleted: ${chatId}`);

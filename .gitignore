@@ -1,6 +1,6 @@
 node_modules/
-.DS_Store
 .env
+chats.db
+chats.db-journal
 *.log
-.vscode/
-.idea/
+.DS_Store
