@@ -377,8 +377,9 @@ async function sendMessage() {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'AI request failed');
+            // Don't try to parse JSON - just throw generic error
+            // This prevents "Failed to execute 'json'" errors
+            throw new Error('REQUEST_FAILED');
         }
 
         // Process streaming response

@@ -25,43 +25,41 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
 });
 
-// Hugging Face API (Fallback - FREE and UNLIMITED)
-// Using free inference API - no key needed!
-const HF_MODELS = [
-  'https://api-inference.huggingface.co/models/microsoft/DialoGPT-large',
-  'https://api-inference.huggingface.co/modles/facebook/blenderbot-400M-distill'
-];
+// Hugging Face API (Fallback - FREE text-to-text model)
+// Using Google Flan-T5 - works well for QA
+const HF_API_URL = 'https://api-inference.huggingface.co/models/google/flan-t5-large';
 
 async function callHuggingFace(messages) {
-  // Extract last user message 
-  const lastMessage = messages[messages.length - 1]?.content || 'Привет';
+  // Extract user question
+  const userMessage = messages[messages.length - 1]?.content || 'Привет';
 
-  // Try primary model
   try {
-    const response = await axios.post(HF_MODELS[0], {
-      inputs: lastMessage,
+    const response = await axios.post(HF_API_URL, {
+      inputs: userMessage,
       parameters: {
-        max_new_tokens: 250,
+        max_new_tokens: 200,
         temperature: 0.7,
-        return_full_text: false
+        top_p: 0.9,
+        do_sample: true
       }
     }, {
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: 30000
+      timeout: 15000 // 15 sec timeout
     });
 
-    if (response.data && response.data[0]) {
-      return response.data[0].generated_text || 'Ответ получен';
+    // Flan-T5 returns array with generated_text
+    if (response.data && Array.isArray(response.data) && response.data[0]?.generated_text) {
+      return response.data[0].generated_text;
     }
 
-    // Fallback response
-    return `Понял ваш вопрос: "${lastMessage.substring(0, 50)}...". AI сейчас перегружен, попробуйте через минуту.`;
+    // Fallback
+    return `Ответ на "${userMessage.substring(0, 50)}...": попробуйте переформулировать вопрос.`;
   } catch (error) {
     console.error(`HF Error:`, error.message);
     // Graceful fallback
-    return `Получил запрос. AI временно перегружен. Ваш вопрос: "${lastMessage.substring(0, 50)}..."`;
+    return `Отвечу как только освобожусь. Ваш вопрос: "${userMessage.substring(0, 50)}..."`;
   }
 }
 
