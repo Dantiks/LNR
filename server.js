@@ -5,7 +5,7 @@ const cheerio = require('cheerio');
 const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
-const Groq = require('groq-sdk');
+// AI request functions imported from ai-requests.js
 const db = require('./database'); // SQLite database
 require('dotenv').config();
 
@@ -20,23 +20,20 @@ const io = socketIo(server, {
 
 const PORT = process.env.PORT || 3000;
 
-// Initialize Groq (Primary AI - Fast & High Quality)
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY
-});
+
 
 // Import clean AI request functions
 const {
-  tryGroqRequest,
+  tryOpenRouterRequest,
+  tryGeminiRequest,
   tryHuggingFaceRequest,
-  streamResponse,
   sendSimpleResponse,
   makeAIRequest
 } = require('./ai-requests');
 
-if (!process.env.GROQ_API_KEY) {
-  console.warn('⚠️  WARNING: GROQ_API_KEY not found in .env file!');
-  console.warn('📝 Get your free API key at: https://console.groq.com');
+if (!process.env.OPENROUTER_API_KEY) {
+  console.warn('⚠️  WARNING: OPENROUTER_API_KEY not found in .env file!');
+  console.warn('📝 Get your free API key at: https://openrouter.ai');
 }
 
 // Load chats from database (persistent storage)
@@ -262,15 +259,15 @@ app.post('/api/chat', async (req, res) => {
   } catch (error) {
     console.error('AI Chat error:', error);
 
-    if (!process.env.GROQ_API_KEY) {
+    if (!process.env.OPENROUTER_API_KEY) {
       return res.status(503).json({
-        error: 'API ключ не настроен. Добавьте GROQ_API_KEY в файл .env и перезапустите сервер.'
+        error: 'API ключ не настроен. Добавьте OPENROUTER_API_KEY в файл .env и перезапустите сервер.'
       });
     }
 
     if (error.status === 401) {
       return res.status(401).json({
-        error: 'Неверный API ключ. Проверьте GROQ_API_KEY в файле .env.'
+        error: 'Неверный API ключ. Проверьте OPENROUTER_API_KEY в файле .env.'
       });
     }
 

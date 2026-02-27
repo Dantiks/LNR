@@ -1,78 +1,183 @@
 // ================================================================
 // AI REQUEST FUNCTIONS - Clean Architecture
 // Each function has single responsibility
+// Priority: 1. OpenRouter (free models) → 2. Gemini → 3. HuggingFace
 // ================================================================
 
-const Groq = require('groq-sdk');
 const axios = require('axios');
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-// OpenAI - lazy init (only when API key exists, prevents crash)
-let openai = null;
-function getOpenAI() {
-    if (!openai && process.env.OPENAI_API_KEY) {
-        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Gemini - lazy init
+let genAI = null;
+function getGemini() {
+    if (!genAI && process.env.GEMINI_API_KEY) {
+        genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     }
-    return openai;
+    return genAI;
 }
 
 // ================================================================
-// 1. GROQ REQUEST
-// Попытка запроса к Groq API с retry логикой
-// Возвращает: { success: boolean, content: string|null, stream: object|null }
+// 1. OPENROUTER REQUEST (PRIMARY)
+// OpenRouter - free models aggregator (Gemma 3, Llama 3.3, etc.)
+// Uses OpenAI-compatible API format
+// Возвращает: { success: boolean, content: string|null }
 // ================================================================
-async function tryGroqRequest(messages, maxRetries = 3) {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            const stream = await groq.chat.completions.create({
-                model: 'llama-3.3-70b-versatile',
-                messages: messages,
-                stream: true,
-                temperature: 0.7,
-                max_tokens: 4000
-            });
+async function tryOpenRouterRequest(messages, maxRetries = 3) {
+    if (!process.env.OPENROUTER_API_KEY) {
+        console.log('⚠️ OPENROUTER_API_KEY not set - OpenRouter unavailable');
+        return { success: false, content: null };
+    }
 
-            console.log(`✅ Groq succeeded on attempt ${attempt + 1}`);
-            return { success: true, stream, content: null };
+    // Free models to try in order (best quality first)
+    const freeModels = [
+        'google/gemma-3-4b-it:free',
+        'meta-llama/llama-3.2-3b-instruct:free'
+    ];
 
-        } catch (error) {
-            console.log(`❌ Groq attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);
+    for (const model of freeModels) {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                // Some free models (Gemma) don't support system role
+                // Merge system message into first user message
+                let formattedMessages = [];
+                let systemContent = '';
+                for (const msg of messages) {
+                    if (msg.role === 'system') {
+                        systemContent = msg.content;
+                    } else {
+                        formattedMessages.push({ ...msg });
+                    }
+                }
+                // Prepend system instructions to first user message
+                if (systemContent && formattedMessages.length > 0) {
+                    const firstUserIdx = formattedMessages.findIndex(m => m.role === 'user');
+                    if (firstUserIdx !== -1) {
+                        formattedMessages[firstUserIdx] = {
+                            ...formattedMessages[firstUserIdx],
+                            content: `[Instructions: ${systemContent}]\n\n${formattedMessages[firstUserIdx].content}`
+                        };
+                    }
+                }
 
-            // Wait before retry (exponential backoff)
-            if (attempt < maxRetries - 1) {
-                const wait = Math.pow(2, attempt) * 500; // 500ms, 1s, 2s
-                await new Promise(r => setTimeout(r, wait));
+                const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+                    model: model,
+                    messages: formattedMessages,
+                    max_tokens: 4000,
+                    temperature: 0.7
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://lnr-igvi.onrender.com',
+                        'X-Title': 'LNR AI Chat'
+                    },
+                    timeout: 30000
+                });
+
+                const content = response.data?.choices?.[0]?.message?.content;
+                if (content) {
+                    console.log(`✅ OpenRouter (${model}) succeeded on attempt ${attempt + 1}`);
+                    return { success: true, content };
+                }
+
+            } catch (error) {
+                const status = error.response?.status;
+                const errorMsg = error.response?.data?.error?.message || error.message;
+                console.log(`❌ OpenRouter (${model}) attempt ${attempt + 1}/${maxRetries} failed: ${status} ${errorMsg}`);
+
+                // If 429/400/404, try next model
+                if (status === 429 || status === 400 || status === 404) break;
+
+                // Otherwise retry with backoff
+                if (attempt < maxRetries - 1) {
+                    const wait = Math.pow(2, attempt) * 500;
+                    await new Promise(r => setTimeout(r, wait));
+                }
             }
         }
     }
 
-    // All retries failed
-    return { success: false, stream: null, content: null };
+    return { success: false, content: null };
 }
 
 // ================================================================
-// 2. HUGGINGFACE REQUEST  
-// Попытка запроса к HuggingFace (С API ключом)
-// Использует Google Flan-T5-Base (ПРОВЕРЕНО - работает с ключом)
+// 2. GEMINI REQUEST (FALLBACK 1)
+// Google Gemini 2.0 Flash - free tier
+// Возвращает: { success: boolean, content: string|null }
+// ================================================================
+async function tryGeminiRequest(messages, maxRetries = 2) {
+    const ai = getGemini();
+    if (!ai) {
+        console.log('⚠️ GEMINI_API_KEY not set - Gemini unavailable');
+        return { success: false, content: null };
+    }
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+            // Convert messages to Gemini format
+            const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+            const chatMessages = messages.filter(m => m.role !== 'system');
+            const history = [];
+
+            for (let i = 0; i < chatMessages.length - 1; i++) {
+                const msg = chatMessages[i];
+                history.push({
+                    role: msg.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: msg.content }]
+                });
+            }
+
+            const lastMessage = chatMessages[chatMessages.length - 1]?.content || 'Привет';
+
+            const chatConfig = {
+                history: history,
+                generationConfig: {
+                    temperature: 0.7,
+                    maxOutputTokens: 4000,
+                }
+            };
+            if (systemMsg) {
+                chatConfig.systemInstruction = { parts: [{ text: systemMsg }] };
+            }
+
+            const chat = model.startChat(chatConfig);
+            const result = await chat.sendMessage(lastMessage);
+            const text = result.response.text();
+
+            if (text) {
+                console.log(`✅ Gemini succeeded on attempt ${attempt + 1}`);
+                return { success: true, content: text };
+            }
+
+        } catch (error) {
+            console.log(`❌ Gemini attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);
+            if (attempt < maxRetries - 1) {
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+    }
+
+    return { success: false, content: null };
+}
+
+// ================================================================
+// 3. HUGGINGFACE REQUEST (FALLBACK 2)
+// Meta Llama 3.2 3B
 // Возвращает: { success: boolean, content: string }
 // ================================================================
 async function tryHuggingFaceRequest(messages) {
-    // Check if HF token is available
     if (!process.env.HUGGINGFACE_TOKEN) {
         console.log('⚠️ HUGGINGFACE_TOKEN not set - HF fallback unavailable');
         return { success: false, content: null };
     }
 
-    // Meta Llama 3.2 3B - free, fast, and currently available
     const HF_API_URL = 'https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-3B-Instruct';
 
-    // Format messages for Llama (system + user messages)
     const systemMsg = messages.find(m => m.role === 'system')?.content || 'You are a helpful AI assistant.';
     const userMessage = messages[messages.length - 1]?.content || 'Привет';
 
-    // Llama instruction format
     const prompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemMsg}<|eot_id|><|start_header_id|>user<|end_header_id|>\n${userMessage}<|eot_id|><|start_header_id|>assistant<|end_header_id|>`;
 
     try {
@@ -84,32 +189,22 @@ async function tryHuggingFaceRequest(messages) {
                 top_p: 0.9,
                 return_full_text: false
             },
-            options: {
-                wait_for_model: true,  // Wait if model is loading
-                use_cache: false
-            }
+            options: { wait_for_model: true, use_cache: false }
         }, {
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${process.env.HUGGINGFACE_TOKEN}`
             },
-            timeout: 60000 // 60 sec (Llama может быть медленнее)
+            timeout: 60000
         });
 
-        // Check response format
         if (response.data) {
             let text = '';
-
-            // Handle array response
             if (Array.isArray(response.data) && response.data[0]?.generated_text) {
                 text = response.data[0].generated_text.trim();
-            }
-            // Handle direct text
-            else if (typeof response.data === 'string') {
+            } else if (typeof response.data === 'string') {
                 text = response.data.trim();
-            }
-            // Handle object with text
-            else if (response.data.generated_text) {
+            } else if (response.data.generated_text) {
                 text = response.data.generated_text.trim();
             }
 
@@ -119,83 +214,19 @@ async function tryHuggingFaceRequest(messages) {
             }
         }
 
-        // No valid response
         console.log('❌ HuggingFace: Invalid response format');
         return { success: false, content: null };
 
     } catch (error) {
         const status = error.response?.status;
-        const errorMsg = error.response?.data?.error || error.message;
-
-        console.error(`❌ HuggingFace error: ${status || errorMsg}`);
-
-        // If model is loading, provide helpful message
-        if (status === 503) {
-            console.log('⏳ Model is loading, this may take a moment...');
-        }
-
+        console.error(`❌ HuggingFace error: ${status || error.message}`);
         return { success: false, content: null };
     }
 }
 
 // ================================================================
-// 3. OPENAI REQUEST  
-// Попытка запроса к OpenAI GPT-5-mini
-// Возвращает: { success: boolean, content: string, stream: object|null }
-// ================================================================
-async function tryOpenAIRequest(messages) {
-    const client = getOpenAI();
-    if (!client) {
-        console.log('⚠️ OPENAI_API_KEY not set - OpenAI fallback unavailable');
-        return { success: false, content: null, stream: null };
-    }
-
-    try {
-        const stream = await client.chat.completions.create({
-            model: 'gpt-5-mini',
-            messages: messages,
-            stream: true,
-            temperature: 0.7,
-            max_tokens: 2000
-        });
-
-        console.log('✅ OpenAI (GPT-5-mini) succeeded');
-        return { success: true, stream, content: null };
-
-    } catch (error) {
-        const errorMsg = error.message || 'Unknown error';
-        console.error(`❌ OpenAI error: ${errorMsg}`);
-        return { success: false, content: null, stream: null };
-    }
-}
-
-// ================================================================
-// 4. STREAM RESPONSE
-// Отправляет streaming ответ клиенту через SSE
-// Не знает про AI провайдеров - просто streaming
-// ================================================================
-async function streamResponse(stream, res) {
-    try {
-        for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || '';
-            if (content) {
-                res.write(`data: ${JSON.stringify({ content })}\n\n`);
-            }
-        }
-
-        res.write('data: [DONE]\n\n');
-        res.end();
-        console.log('✅ Streaming complete');
-
-    } catch (error) {
-        console.error(`❌ Stream error: ${error.message}`);
-        throw error;
-    }
-}
-
-// ================================================================
 // 4. SEND SIMPLE RESPONSE
-// Отправляет простой (non-streaming) ответ
+// Отправляет ответ через SSE
 // ================================================================
 function sendSimpleResponse(content, res) {
     res.write(`data: ${JSON.stringify({ content })}\n\n`);
@@ -205,41 +236,31 @@ function sendSimpleResponse(content, res) {
 
 // ================================================================
 // 5. MAIN AI REQUEST (Orchestrator)
-// Главная функция - управляет попытками AI
-// 1. Пробует Groq (быстро, бесплатно, streaming)
-// 2. Если fail → OpenAI (надежно, платно, streaming)
-// 3. Если fail → HuggingFace (медленно, бесплатно)
+// 1. OpenRouter (бесплатные модели, надёжно)
+// 2. Gemini (бесплатно, но квота может закончиться)
+// 3. HuggingFace (медленно, бесплатно)
 // 4. Если все fail → graceful message
 // ================================================================
 async function makeAIRequest(messages, res) {
-    // Try Groq first (fast, high quality, free with limits)
-    const groqResult = await tryGroqRequest(messages, 3);
+    // Try OpenRouter first (free models, reliable)
+    console.log('🔄 Trying OpenRouter...');
+    const openRouterResult = await tryOpenRouterRequest(messages, 2);
 
-    if (groqResult.success) {
-        try {
-            await streamResponse(groqResult.stream, res);
-            return;
-        } catch (streamError) {
-            console.error('Groq streaming failed, trying OpenAI...');
-            // Fall through to OpenAI
-        }
+    if (openRouterResult.success) {
+        sendSimpleResponse(openRouterResult.content, res);
+        return;
     }
 
-    // Groq failed - try OpenAI (reliable, paid)
-    console.log('🔄 Switching to OpenAI fallback...');
-    const openaiResult = await tryOpenAIRequest(messages);
+    // OpenRouter failed - try Gemini
+    console.log('🔄 Switching to Gemini fallback...');
+    const geminiResult = await tryGeminiRequest(messages, 2);
 
-    if (openaiResult.success) {
-        try {
-            await streamResponse(openaiResult.stream, res);
-            return;
-        } catch (streamError) {
-            console.error('OpenAI streaming failed, trying HuggingFace...');
-            // Fall through to HuggingFace
-        }
+    if (geminiResult.success) {
+        sendSimpleResponse(geminiResult.content, res);
+        return;
     }
 
-    // Both Groq and OpenAI failed - try HuggingFace (free, slow)
+    // Gemini failed - try HuggingFace
     console.log('🔄 Switching to HuggingFace fallback...');
     const hfResult = await tryHuggingFaceRequest(messages);
 
@@ -248,17 +269,16 @@ async function makeAIRequest(messages, res) {
         return;
     }
 
-    // All providers failed - send graceful message
+    // All providers failed
     console.log('⚠️ All providers failed - graceful degradation');
     const gracefulMessage = '😊 AI сейчас очень загружен. Попробуйте через минуту!';
     sendSimpleResponse(gracefulMessage, res);
 }
 
 module.exports = {
-    tryGroqRequest,
-    tryOpenAIRequest,
+    tryOpenRouterRequest,
+    tryGeminiRequest,
     tryHuggingFaceRequest,
-    streamResponse,
     sendSimpleResponse,
     makeAIRequest
 };
