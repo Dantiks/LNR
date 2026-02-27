@@ -24,9 +24,11 @@ const PORT = process.env.PORT || 3000;
 
 // Import clean AI request functions
 const {
+  tryGroqRequest,
   tryOpenRouterRequest,
   tryGeminiRequest,
   tryHuggingFaceRequest,
+  streamResponse,
   sendSimpleResponse,
   makeAIRequest
 } = require('./ai-requests');
