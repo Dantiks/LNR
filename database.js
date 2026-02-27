@@ -90,6 +90,12 @@ const dbOps = {
     // Delete chat
     deleteChat(chatId) {
         statements.deleteChat.run(chatId);
+    },
+
+    // Clear all chats and messages
+    clearAll() {
+        db.exec('DELETE FROM messages');
+        db.exec('DELETE FROM chats');
     }
 };
 

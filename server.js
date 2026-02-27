@@ -84,6 +84,31 @@ app.get('/health', (req, res) => {
 // Start keep-alive system
 require('./keep-alive');
 
+// Clear all chats (admin endpoint)
+app.post('/api/clear-chats', (req, res) => {
+  try {
+    db.clearAll();
+    // Reset in-memory chats
+    chats = {};
+    // Create a fresh default chat
+    const defaultChatId = 'chat-' + Date.now();
+    chats[defaultChatId] = {
+      id: defaultChatId,
+      title: 'Новый чат',
+      createdAt: new Date().toISOString(),
+      messages: []
+    };
+    db.saveChat(chats[defaultChatId]);
+    // Notify all connected clients
+    io.emit('chats', Object.values(chats));
+    console.log('🗑️ All chats cleared');
+    res.json({ success: true, message: 'All chats cleared' });
+  } catch (error) {
+    console.error('Error clearing chats:', error);
+    res.status(500).json({ error: 'Failed to clear chats' });
+  }
+});
+
 // Endpoint for fetching and extracting text from URL
 app.post('/api/fetch-url', async (req, res) => {
   try {
